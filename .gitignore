@@ -1,0 +1,17 @@
+# Built programs and packages
+bin/
+dist/
+spike/bin/
+tests/bin/
+*.exe
+*.obj
+*.pdb
+
+# Test output: logs, pictures and recordings made on the developer's PC
+spike/results/
+tests/results/
+*.mp4
+
+# Personal settings
+snapcap.ini
+*.ini.bak
