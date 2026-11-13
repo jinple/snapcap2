@@ -3,7 +3,7 @@
 // program. Changes apply when Save is pressed; nothing needs a restart.
 
 enum {
-    ID_FOLLOW = 101, ID_SCREEN, ID_VIDEO, ID_ADMIN,
+    ID_FOLLOW = 101, ID_SCREEN, ID_VIDEO, ID_ADMIN, ID_BORDERLESS,
     ID_CORNER = 110,
     ID_HK0 = 120, // ..123: attach, show on screen, record, show in video
     ID_FPS = 130, ID_SIZE, ID_RATE,
@@ -91,6 +91,7 @@ static void settingsSave() {
     g_showOnScreen = IsDlgButtonChecked(g_settings, ID_SCREEN) == BST_CHECKED;
     g_showInVideo = IsDlgButtonChecked(g_settings, ID_VIDEO) == BST_CHECKED;
     g_askAdmin = IsDlgButtonChecked(g_settings, ID_ADMIN) == BST_CHECKED;
+    g_forceBorderless = IsDlgButtonChecked(g_settings, ID_BORDERLESS) == BST_CHECKED;
     g_corner = comboValue(ID_CORNER, g_corner);
     for (int i = 0; i < 4; i++) {
         WORD v = LOWORD(SendDlgItemMessageW(g_settings, ID_HK0 + i, HKM_GETHOTKEY, 0, 0));
@@ -180,7 +181,7 @@ static void openSettings() {
         SendMessageW(c, WM_SETFONT, (WPARAM)g_setFont, TRUE);
         return c;
     };
-    const int L = 18, CX = 200, CW = 250, W = 470;
+    const int L = 18, CX = 200, W = 540, CW = W - CX - L;
     int y = 16;
     auto check = [&](const wchar_t* text, int id, bool on) {
         mk(L"BUTTON", text, BS_AUTOCHECKBOX | WS_TABSTOP, L, y, W - 2 * L, 22, id);
@@ -194,6 +195,7 @@ static void openSettings() {
     check(L"Show name and FPS on screen", ID_SCREEN, g_showOnScreen);
     check(L"Show name and FPS in the video", ID_VIDEO, g_showInVideo);
     check(L"Ask for exact FPS (administrator prompt) when SnapCap starts", ID_ADMIN, g_askAdmin);
+    check(L"Force borderless mode (Fixes missing overlay in exclusive fullscreen games)", ID_BORDERLESS, g_forceBorderless);
     y += 8;
     label(L"Position of name and FPS");
     HWND c = combo(ID_CORNER);

@@ -76,6 +76,15 @@ OutputFolder
     Empty means Videos\SnapCap.
 ShowOnScreen, ShowInVideo, AskForExactFps, FollowFocus
     1 or 0. These are also changed from the tray menu.
+ForceBorderless
+    1 or 0, off by default. The overlay can't show over exclusive fullscreen.
+    With this on, when the attached game is in exclusive fullscreen SnapCap
+    presses Alt+Enter once, which makes most games a window. It then removes
+    the window's title bar and borders and stretches it over the monitor.
+    If the game ignores Alt+Enter you get a notice to change it in the game's
+    own settings. Only Unity windows and windows seen in exclusive fullscreen
+    are changed. Don't press Alt+Enter yourself afterwards: that returns the
+    game to exclusive fullscreen.
 
 
 Good to know

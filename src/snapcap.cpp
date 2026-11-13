@@ -63,6 +63,10 @@ static Hotkey g_hk[4];      // attach, show on screen, record, show in video (sa
 static int g_corner = 0;    // 0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right
 static rec::Options g_recOpt;
 static bool g_follow = true;   // attach to whatever window is in focus
+static bool g_forceBorderless = false; // make a game window borderless once it is out of exclusive fullscreen
+static HWND g_exclusiveSeen, g_exclusiveTold, g_altEnterTried; // window last seen in exclusive fullscreen; the one the user was told about; the one we pressed Alt+Enter for
+static ULONGLONG g_altEnterTick, g_borderlessUntil;
+static HWND g_borderlessFixed; // the window we made borderless, kept at monitor size until g_borderlessUntil
 static std::wstring runningText() {
     if (g_follow) return L"SnapCap is running in the tray and follows the window in focus. " + g_hk[2].text + L" starts and stops recording.";
     return L"SnapCap is running in the tray. Bring a window to the front and press " + g_hk[0].text + L" to attach, or use the tray icon.";
@@ -164,6 +168,7 @@ static void saveSettings() {
     put(L"ShowInVideo", g_showInVideo ? L"1" : L"0");
     put(L"AskForExactFps", g_askAdmin ? L"1" : L"0");
     put(L"FollowFocus", g_follow ? L"1" : L"0");
+    put(L"ForceBorderless", g_forceBorderless ? L"1" : L"0");
     for (int i = 0; i < 4; i++) put(kHotkeyKeys[i], g_hk[i].vk ? g_hk[i].text : L"None");
     put(L"Corner", kCornerNames[g_corner]);
     put(L"VideoFps", std::to_wstring(g_recOpt.fps));
@@ -179,6 +184,7 @@ static void loadSettings() {
     g_showInVideo = GetPrivateProfileIntW(L"snapcap", L"ShowInVideo", 1, ini.c_str()) != 0;
     g_askAdmin = GetPrivateProfileIntW(L"snapcap", L"AskForExactFps", 1, ini.c_str()) != 0;
     g_follow = GetPrivateProfileIntW(L"snapcap", L"FollowFocus", 1, ini.c_str()) != 0;
+    g_forceBorderless = GetPrivateProfileIntW(L"snapcap", L"ForceBorderless", 0, ini.c_str()) != 0;
     for (int i = 0; i < 4; i++) g_hk[i] = parseHotkey(iniString(kHotkeyKeys[i], kHotkeyDefaults[i]), kHotkeyDefaults[i]);
     const std::wstring corner = iniString(L"Corner", L"TopLeft");
     g_corner = 0;
@@ -769,6 +775,62 @@ static void setFollow(bool on) {
     if (on) followFocus(GetForegroundWindow());
 }
 
+// ---------------------------------------------------------------- force borderless
+// A topmost overlay can't draw over true exclusive fullscreen, and a window can't be
+// moved out of that mode from outside. So: press Alt+Enter once for the user, and
+// when the game is then a normal window, strip its title bar and borders and stretch
+// it over its monitor. Only Unity windows and windows seen in exclusive fullscreen
+// are touched, never ordinary programs.
+static void forceBorderless() {
+    if (!g_forceBorderless || !g_target || !IsWindow(g_target) || IsIconic(g_target)) return;
+    QUERY_USER_NOTIFICATION_STATE qs;
+    if (SUCCEEDED(SHQueryUserNotificationState(&qs)) && qs == QUNS_RUNNING_D3D_FULL_SCREEN &&
+        GetAncestor(GetForegroundWindow(), GA_ROOT) == g_target) {
+        g_exclusiveSeen = g_target;
+        if (g_altEnterTried != g_target) { // press Alt+Enter once, which makes most games a window
+            g_altEnterTried = g_target;
+            g_altEnterTick = GetTickCount64();
+            INPUT in[4]{};
+            const WORD keys[4] = {VK_MENU, VK_RETURN, VK_RETURN, VK_MENU};
+            for (int i = 0; i < 4; i++) {
+                in[i].type = INPUT_KEYBOARD;
+                in[i].ki.wVk = keys[i];
+                in[i].ki.dwFlags = i >= 2 ? KEYEVENTF_KEYUP : 0;
+            }
+            SendInput(4, in, sizeof(INPUT));
+        } else if (g_exclusiveTold != g_target && GetTickCount64() - g_altEnterTick > 3000) {
+            g_exclusiveTold = g_target; // Alt+Enter did nothing: this game doesn't allow it
+            trayBalloon(L"This game is in exclusive fullscreen, so the overlay can't show on it, and it ignored Alt+Enter. Switch it to borderless or windowed in its own settings.");
+        }
+        return;
+    }
+    g_altEnterTried = nullptr; // out of exclusive fullscreen: ready for the next time
+    g_exclusiveTold = nullptr;
+    wchar_t cls[64] = L"";
+    GetClassNameW(g_target, cls, 64);
+    if (g_target != g_exclusiveSeen && wcscmp(cls, L"UnityWndClass")) return;
+    LONG_PTR style = GetWindowLongPtrW(g_target, GWL_STYLE);
+    const bool hasCaption = (style & WS_CAPTION) == WS_CAPTION;
+    // For a few seconds after the change the game may resize its own window back
+    // (Unity does, to its windowed size), which pushes the bottom off the screen.
+    // So keep checking the size until it holds.
+    const bool settling = g_target == g_borderlessFixed && GetTickCount64() < g_borderlessUntil;
+    if (!hasCaption && !settling) return; // already borderless (or never had a title bar)
+    MONITORINFO mi{sizeof(mi)};
+    if (!GetMonitorInfoW(MonitorFromWindow(g_target, MONITOR_DEFAULTTONEAREST), &mi)) return;
+    const RECT& m = mi.rcMonitor;
+    RECT cur{};
+    GetWindowRect(g_target, &cur);
+    if (!hasCaption && EqualRect(&cur, &m)) return;
+    if (hasCaption) {
+        SetWindowLongPtrW(g_target, GWL_STYLE, (style & ~(LONG_PTR)WS_OVERLAPPEDWINDOW) | WS_POPUP);
+        g_borderlessFixed = g_target;
+        g_borderlessUntil = GetTickCount64() + 6000;
+    }
+    SetWindowPos(g_target, nullptr, m.left, m.top, m.right - m.left, m.bottom - m.top,
+                 SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+}
+
 // ---------------------------------------------------------------- recording
 static void toggleRecord() {
     rec::State s = rec::state();
@@ -923,6 +985,7 @@ static void tick() {
         }
     }
     if (g_tickCount % 5 == 0) followFocus(GetForegroundWindow()); // in case a focus change was missed
+    if (g_tickCount % 5 == 0) forceBorderless();
     if (g_tickCount % 5 == 0) refreshText();              // twice a second
     positionOverlay(g_overlayShown && g_tickCount % 5 == 0); // also re-assert "on top" twice a second
     if (g_exitAfter > 0 && double(GetTickCount64() - g_startTick) / 1000.0 >= g_exitAfter) DestroyWindow(g_main);
