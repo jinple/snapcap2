@@ -194,7 +194,7 @@ static void openSettings() {
     check(L"Follow the window in focus", ID_FOLLOW, g_follow);
     check(L"Show name and FPS on screen", ID_SCREEN, g_showOnScreen);
     check(L"Show name and FPS in the video", ID_VIDEO, g_showInVideo);
-    check(L"Ask for exact FPS (administrator prompt) when SnapCap starts", ID_ADMIN, g_askAdmin);
+    check(L"Turn on exact FPS when SnapCap starts (may ask for administrator)", ID_ADMIN, g_askAdmin);
     check(L"Force borderless mode (Fixes missing overlay in exclusive fullscreen games)", ID_BORDERLESS, g_forceBorderless);
     y += 8;
     label(L"Position of name and FPS");

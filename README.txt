@@ -22,6 +22,12 @@ Starting
    snapcap.exe itself never runs as administrator. Nothing is installed and no
    Windows setting is changed.
 
+   To never see that prompt: add your Windows account to the "Performance Log
+   Users" group once (in an administrator terminal: net localgroup "Performance
+   Log Users" %USERNAME% /add), then sign out and back in. SnapCap then starts
+   the helper as you, with exact FPS and no prompt. It only asks for
+   administrator permission if that fails.
+
 
 Using it
 --------

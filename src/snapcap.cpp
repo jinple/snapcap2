@@ -366,9 +366,13 @@ static void setHelper(int s) {
     PostMessageW(g_main, WM_HELPER_CHANGED, 0, 0);
 }
 
-// Starts snapcap-fps.exe with the standard administrator prompt and reads what
-// it sends. Runs on its own thread so the tray stays usable while the prompt shows.
-static DWORD WINAPI helperThread(LPVOID) {
+// Runs snapcap-fps.exe once and reads what it sends. With elevated=false it is started
+// as the current user, which works when the account is in "Performance Log Users".
+// With elevated=true it uses the standard administrator prompt. needElevation is set
+// when a plain start produced nothing, so the caller can try the prompt.
+static int runHelper(bool elevated, bool& needElevation) {
+    needElevation = false;
+    bool gotData = false;
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     GUID id{};
     CoCreateGuid(&id);
@@ -384,16 +388,26 @@ static DWORD WINAPI helperThread(LPVOID) {
         std::wstring exe = exeDir() + L"snapcap-fps.exe";
         wchar_t params[256];
         swprintf(params, 256, L"--pipe \"%s\" --parent %lu", pipeName, GetCurrentProcessId());
-        SHELLEXECUTEINFOW sei{sizeof(sei)};
-        sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
-        sei.lpVerb = L"runas";
-        sei.lpFile = exe.c_str();
-        sei.lpParameters = params;
-        sei.nShow = SW_HIDE;
-        if (!ShellExecuteExW(&sei)) {
-            result = GetLastError() == ERROR_CANCELLED ? H_DECLINED : H_FAILED;
+        bool launched = false;
+        if (elevated) {
+            SHELLEXECUTEINFOW sei{sizeof(sei)};
+            sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
+            sei.lpVerb = L"runas";
+            sei.lpFile = exe.c_str();
+            sei.lpParameters = params;
+            sei.nShow = SW_HIDE;
+            launched = ShellExecuteExW(&sei) != FALSE;
+            if (launched) proc = sei.hProcess;
         } else {
-            proc = sei.hProcess;
+            std::wstring cmdline = L"\"" + exe + L"\" " + params;
+            STARTUPINFOW si{sizeof(si)};
+            PROCESS_INFORMATION pi{};
+            launched = CreateProcessW(exe.c_str(), cmdline.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi) != FALSE;
+            if (launched) { proc = pi.hProcess; CloseHandle(pi.hThread); }
+        }
+        if (!launched) {
+            result = elevated && GetLastError() == ERROR_CANCELLED ? H_DECLINED : H_FAILED;
+        } else {
             OVERLAPPED ov{};
             ov.hEvent = ev;
             bool connected = false;
@@ -413,7 +427,6 @@ static DWORD WINAPI helperThread(LPVOID) {
                 if (started && GetNamedPipeClientProcessId(pipe, &client) && client != started) connected = false;
             }
             if (connected) {
-                setHelper(H_ON);
                 std::vector<unsigned char> buf(sizeof(fpsproto::Header) + fpsproto::kMaxEntries * sizeof(fpsproto::Entry));
                 for (;;) {
                     ResetEvent(ev);
@@ -430,6 +443,7 @@ static DWORD WINAPI helperThread(LPVOID) {
                     memcpy(&h, buf.data(), sizeof(h));
                     if (h.magic != fpsproto::kMagic || h.count > fpsproto::kMaxEntries ||
                         n != sizeof(h) + h.count * sizeof(fpsproto::Entry)) continue;
+                    if (!gotData) { gotData = true; setHelper(H_ON); } // the trace is running
                     AcquireSRWLockExclusive(&g_fpsLock);
                     g_helperFps.clear();
                     for (uint32_t i = 0; i < h.count; i++) {
@@ -447,6 +461,16 @@ static DWORD WINAPI helperThread(LPVOID) {
     if (proc) CloseHandle(proc);
     CloseHandle(ev);
     CoUninitialize();
+    needElevation = !elevated && !gotData;
+    return result;
+}
+
+// Tries a plain start first, and shows the administrator prompt only if Windows
+// refused it. Runs on its own thread so the tray stays usable while the prompt shows.
+static DWORD WINAPI helperThread(LPVOID) {
+    bool need = false;
+    int result = runHelper(false, need);
+    if (need && WaitForSingleObject(g_quitEvent, 0) != WAIT_OBJECT_0) result = runHelper(true, need);
     if (WaitForSingleObject(g_quitEvent, 0) != WAIT_OBJECT_0) setHelper(result);
     return 0;
 }
@@ -921,8 +945,8 @@ static void showMenu() {
                           : h == H_FAILED ? L"FPS: capped at the screen's refresh rate (helper not running)"
                           : L"FPS: capped at the screen's refresh rate";
     AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, status);
-    if (h != H_ON && h != H_STARTING) AppendMenuW(menu, MF_STRING, CMD_START_HELPER, L"Turn on exact FPS (administrator prompt)");
-    AppendMenuW(menu, MF_STRING | (g_askAdmin ? MF_CHECKED : 0), CMD_ASK_ADMIN, L"Ask for exact FPS when SnapCap starts");
+    if (h != H_ON && h != H_STARTING) AppendMenuW(menu, MF_STRING, CMD_START_HELPER, L"Turn on exact FPS");
+    AppendMenuW(menu, MF_STRING | (g_askAdmin ? MF_CHECKED : 0), CMD_ASK_ADMIN, L"Turn on exact FPS when SnapCap starts");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, CMD_FOLDER, L"Open recordings folder");
     AppendMenuW(menu, MF_STRING, CMD_SETTINGS, L"Settings...");
