@@ -713,7 +713,7 @@ struct Session {
             // (fullscreen OpenGL and Vulkan: one frame, then a trickle or nothing), and that
             // can change from moment to moment. Both methods are counted for half a second
             // and the recording uses the one really receiving the game's frames. The choice
-            // is made once, here; see STEP2.md for what that leaves open.
+            // is made once, here; see HISTORY.md for what that leaves open.
             duplThread = CreateThread(nullptr, 0, duplThunk, this, 0, nullptr);
             for (int waited = 0; waited < 2500 && !duplOpen.load() && !stopRequested(); waited += 20) Sleep(20);
             WaitForSingleObject(g_stop, 150);
